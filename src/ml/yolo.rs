@@ -113,15 +113,13 @@ impl Predictor
 	)
 	{
 		if let Some(buffer) = sample.buffer()
+			&& let Ok(map) = buffer.map_readable()
 		{
-			if let Ok(map) = buffer.map_readable()
-			{
-				let raw_rgb_data = map.as_slice();
+			let raw_rgb_data = map.as_slice();
 
-				let tensor_data = unsafe { self._inp.held_data() };
+			let tensor_data = unsafe { self._inp.held_data() };
 
-				convert_image::<INP_HEIGHT, INP_WIDTH, INP_CHANNELS>(raw_rgb_data, tensor_data);
-			}
+			convert_image::<INP_HEIGHT, INP_WIDTH, INP_CHANNELS>(raw_rgb_data, tensor_data);
 		}
 	}
 }
@@ -169,7 +167,7 @@ impl Postprocessor
 
 	fn filter_detections(
 		&mut self,
-		raw_detections : &Vec<f32>,
+		raw_detections : &[f32],
 	) -> InferenceResult
 	{
 		let mut filtered_detections = [None, None, None];
@@ -189,8 +187,8 @@ impl Postprocessor
 				|mut acc, det| {
 					let idx = match det.label
 					{
-						L if L == LABELS.0 => 0,
-						L if L == LABELS.1 => 1,
+						l if l == LABELS.0 => 0,
+						l if l == LABELS.1 => 1,
 						_ => 2,
 					};
 
@@ -220,7 +218,7 @@ impl Postprocessor
 			.enumerate()
 			.for_each(|(idx, new_detection)| {
 				// empty string is a default value, thus no detection was made
-				if new_detection.label != ""
+				if !new_detection.label.is_empty()
 				{
 					filtered_detections[idx] = Some(new_detection);
 				}

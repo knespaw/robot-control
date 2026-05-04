@@ -52,7 +52,7 @@ where
 
 		if shape.is_empty()
 		{
-			Err(MlError::Tensor("tensor must have non-zero shape".into()))
+			Err(MlError::Tensor("tensor must have a non-zero shape".into()))
 		}
 		else
 		{
@@ -202,7 +202,7 @@ impl Engine
 
 		let mut io = session
 			.create_binding()
-			.map_err(|e| MlError::Binding(e))?;
+			.map_err(MlError::Binding)?;
 
 		Self::prebind_outputs(&mut io, &session, output_symbols)?;
 
@@ -224,7 +224,7 @@ impl Engine
 			output.initialize(session.allocator())?;
 
 			io.bind_output(output.key, output._placeholder.unwrap())
-				.map_err(|e| MlError::Binding(e))?;
+				.map_err(MlError::Binding)?;
 		}
 
 		Ok(())
@@ -243,7 +243,7 @@ impl Engine
 			input.initialize(session.allocator())?;
 
 			io.bind_input(input.key, unsafe { input.tensor() })
-				.map_err(|e| MlError::Binding(e))?;
+				.map_err(MlError::Binding)?;
 		}
 
 		Ok(())
@@ -292,41 +292,55 @@ impl Engine
 			.with_execution_providers([executor])
 			.map_err(|e| MlError::Init(e.to_string()))?;
 
-		session_builder =
-			session_builder.with_parallel_execution(inference_parameters.parallel_execution)?;
-
-		session_builder =
-			session_builder.with_memory_pattern(inference_parameters.mem_pattern_opt)?;
+		session_builder = session_builder
+			.with_parallel_execution(inference_parameters.parallel_execution)
+			.map_err(|e| MlError::SessionBuild(e.to_string()))?;
 
 		session_builder = session_builder
-			.with_deterministic_compute(inference_parameters.deterministic_compute)?;
+			.with_memory_pattern(inference_parameters.mem_pattern_opt)
+			.map_err(|e| MlError::SessionBuild(e.to_string()))?;
 
-		session_builder =
-			session_builder.with_optimization_level(inference_parameters.opt_level)?;
+		session_builder = session_builder
+			.with_deterministic_compute(inference_parameters.deterministic_compute)
+			.map_err(|e| MlError::SessionBuild(e.to_string()))?;
+
+		session_builder = session_builder
+			.with_optimization_level(inference_parameters.opt_level)
+			.map_err(|e| MlError::SessionBuild(e.to_string()))?;
 
 		if inference_parameters.gelu_approximation
 		{
-			session_builder = session_builder.with_approximate_gelu()?;
+			session_builder = session_builder
+				.with_approximate_gelu()
+				.map_err(|e| MlError::SessionBuild(e.to_string()))?;
 		}
 
 		if inference_parameters.flush_to_zero
 		{
-			session_builder = session_builder.with_flush_to_zero()?;
+			session_builder = session_builder
+				.with_flush_to_zero()
+				.map_err(|e| MlError::SessionBuild(e.to_string()))?;
 		}
 
 		if inference_parameters.cast_chain_elimination
 		{
-			session_builder = session_builder.with_cast_chain_elimination()?;
+			session_builder = session_builder
+				.with_cast_chain_elimination()
+				.map_err(|e| MlError::SessionBuild(e.to_string()))?;
 		}
 
 		if let Some(inter_threads) = inference_parameters.inter_threads
 		{
-			session_builder = session_builder.with_inter_threads(inter_threads)?;
+			session_builder = session_builder
+				.with_inter_threads(inter_threads)
+				.map_err(|e| MlError::SessionBuild(e.to_string()))?;
 		}
 
 		if let Some(intra_threads) = inference_parameters.intra_threads
 		{
-			session_builder = session_builder.with_intra_threads(intra_threads)?;
+			session_builder = session_builder
+				.with_intra_threads(intra_threads)
+				.map_err(|e| MlError::SessionBuild(e.to_string()))?;
 		}
 
 		Ok(session_builder)
@@ -344,11 +358,11 @@ impl Engine
 		}
 
 		ModelCompiler::new(session_builder.clone())
-			.map_err(|e| MlError::Compilation(e))?
+			.map_err(MlError::Compilation)?
 			.with_embed_ep_context()
-			.map_err(|e| MlError::Compilation(e))?
+			.map_err(MlError::Compilation)?
 			.compile_to_file(compiled_model_path)
-			.map_err(|e| MlError::Compilation(e))?;
+			.map_err(MlError::Compilation)?;
 
 		Ok(())
 	}
@@ -357,10 +371,10 @@ impl Engine
 	{
 		self.io
 			.synchronize_inputs()
-			.map_err(|e| MlError::Sync(e))?;
+			.map_err(MlError::Sync)?;
 
 		self.session
 			.run_binding(&self.io)
-			.map_err(|e| MlError::Inference(e))
+			.map_err(MlError::Inference)
 	}
 }

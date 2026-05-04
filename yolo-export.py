@@ -12,8 +12,7 @@ Settings used:
 - Output shape: (1, 7, 8400) --> 4 box coordinates + 3 labels confidence scores (robot, batteries, board, respectively)
 - Size (memory): 107 MB
 - Size (parameters): 28,358,830
-"""
-
+"""  # noqa
 
 from argparse import ArgumentParser, Namespace
 
@@ -23,7 +22,6 @@ from ultralytics import YOLOWorld
 def parse_args() -> Namespace:
     def str_to_list(s: str) -> list[str]:
         return s.split(", ")
-
 
     args = ArgumentParser()
 
@@ -56,7 +54,10 @@ def parse_args() -> Namespace:
             "battery pack",
             "circuit board",
         ],  # TODO
-        help="Comma-separated prompts describing target objects the model needs to detect."
+        help=(
+            "Comma-separated prompts describing target objects the model needs "
+            "to detect."
+        ),
     )
 
     return args.parse_args()

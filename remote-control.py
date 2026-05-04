@@ -2,8 +2,7 @@ import asyncio
 import sys
 
 import pygame
-from bleak import BleakScanner, BleakClient
-
+from bleak import BleakClient, BleakScanner
 
 # --- CONFIGURATION ---
 UART_CHARACTERISTIC_UUID = "0000ffe3-0000-1000-8000-00805f9b34fb"
@@ -24,7 +23,7 @@ def apply_curve(val, deadzone):
 
     # Cube the output (x^3). This gives extreme precision near the center,
     # but still allows maximum speed when pushed all the way to the edge.
-    return sign * (scaled_val ** 3)
+    return sign * (scaled_val**3)
 
 
 async def main():
@@ -86,7 +85,11 @@ async def main():
                 current_time = time.time()
 
                 # Send if the joystick moved, OR if 0.25 seconds have passed (Heartbeat)
-                if abs(v - last_v) > 0.5 or abs(w - last_w) > 0.05 or (current_time - last_send_time) > 0.25:
+                if (
+                    abs(v - last_v) > 0.5
+                    or abs(w - last_w) > 0.05
+                    or (current_time - last_send_time) > 0.25
+                ):
 
                     # Toggle a space at the end to completely defeat OS Bluetooth deduplication
                     toggle_space = not toggle_space
@@ -95,7 +98,11 @@ async def main():
                     command = f"V{v:.2f}W{w:.2f}{space}\n"
 
                     try:
-                        await client.write_gatt_char(UART_CHARACTERISTIC_UUID, command.encode('utf-8'), response=False)
+                        await client.write_gatt_char(
+                            UART_CHARACTERISTIC_UUID,
+                            command.encode("utf-8"),
+                            response=False,
+                        )
                     except Exception:
                         pass
 

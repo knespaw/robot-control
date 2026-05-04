@@ -122,6 +122,6 @@ impl BLECom
 		self.device
 			.write(&self.characteristic, payload, WriteType::WithoutResponse)
 			.await
-			.map_err(|e| ComError::BLEWrite(e))
+			.map_err(ComError::BLEWrite)
 	}
 }

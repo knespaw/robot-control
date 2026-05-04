@@ -5,7 +5,7 @@ pub(crate) enum MlError
 	Init(String),
 
 	#[error("session build failed >> {0}")]
-	SessionBuild(#[from] ort::Error<ort::session::builder::SessionBuilder>),
+	SessionBuild(String),
 
 	#[error("model ONNX file either is corrupted, or does not exist >> {0}")]
 	ModelFile(String),

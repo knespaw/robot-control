@@ -110,7 +110,7 @@ impl Stream
 						Ok(FlowSuccess::Ok)
 					},
 
-					Err(err) =>
+					Err(_err) =>
 					{
 						// TODO
 						Err(FlowError::Eos)
@@ -138,7 +138,7 @@ impl Stream
 		{
 			match msg.view()
 			{
-				MessageView::Error(e) => break,
+				MessageView::Error(_e) => break,
 
 				MessageView::Eos(_) => break,
 
