@@ -1,0 +1,47 @@
+[package]
+name = "rbctrl"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95.0"
+readme = "README.md"
+
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+debug = 0
+
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ort = { version = "2.0.0-rc.12", features = ["coreml", "ndarray", "tracing"] }
+
+
+[dependencies]
+
+# GStreamer
+gstreamer =  "0.25.0"
+gstreamer-app = "0.25.0"
+
+# Communication
+tokio = { version = "1.52.1", features = ["rt-multi-thread"]}
+kanal = { version = "0.1.1", features = ["async"] }
+btleplug = { version = "0.11.8" }
+uuid = { version = "1.23.1" }
+
+# Logging
+tracing = { version = "0.1.44" }
+tracing-subscriber = { version = "0.3.23", features = ["registry", "env-filter"] }
+tracing-opentelemetry = { version = "0.32.1" }
+
+
+
+# Computation
+rand = { version = "0.10.1" }
+rayon = { version = "1.12.0" }
+ndarray = { version = "0.17.2", features = ["std", "rayon"] }
+
+# Images
+imageproc = { version = "0.26.1", features = ["rayon"] }
+
+# General
+thiserror = { version = "2.0.18" }
