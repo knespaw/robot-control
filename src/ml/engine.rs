@@ -120,7 +120,7 @@ impl Default for ExecutionParameters
 			strategy :             SpecializationStrategy::FastPrediction,
 			compute_units :        ComputeUnits::CPUAndNeuralEngine,
 			profile_compute_plan : false,
-			low_fp_accumulation :  true,
+			low_fp_accumulation :  false, //true,
 		}
 	}
 }
@@ -152,7 +152,7 @@ impl Default for InferenceParameters
 			parallel_execution :     true,
 			inter_threads :          None,
 			intra_threads :          None,
-			gelu_approximation :     true,
+			gelu_approximation :     false, //true,
 			mem_pattern_opt :        true,
 			deterministic_compute :  false,
 			opt_level :              GraphOptimizationLevel::All,
@@ -174,7 +174,6 @@ impl Engine
 {
 	pub(crate) fn start<T, V>(
 		model_subpath : &str,
-		recompile : bool,
 		execution_parameters : ExecutionParameters,
 		inference_parameters : InferenceParameters,
 		output_symbols : Vec<TensorSymbol<T>>,
@@ -184,21 +183,15 @@ impl Engine
 		T : TensorType,
 		V : TensorType,
 	{
-		// TODO: do I need to set all these options if I'm re-using a compiled model??
-
-		let (_, compiled_model_path) = Self::get_model_full_path(model_subpath)?;
+		let model_path = Self::get_model_full_path(model_subpath)?;
 
 		let executor = Self::configure_execution(execution_parameters)?;
 
 		let mut session_builder = Self::configure_computation(executor, inference_parameters)?;
 
-		Self::compile(&session_builder, &compiled_model_path, recompile)?;
-
 		let session = session_builder
-			.commit_from_file(compiled_model_path)
+			.commit_from_file(model_path)
 			.map_err(|e| MlError::Init(e.to_string()))?;
-
-		// TODO: do I need to do warm-up if I have a compiled model?
 
 		let mut io = session
 			.create_binding()
@@ -249,7 +242,7 @@ impl Engine
 		Ok(())
 	}
 
-	fn get_model_full_path(model_subpath : &str) -> MlResult<(String, String)>
+	fn get_model_full_path(model_subpath : &str) -> MlResult<String>
 	{
 		let path =
 			get_path(MODELS_DIR, model_subpath).map_err(|e| MlError::ModelFile(e.to_string()))?;
@@ -259,9 +252,7 @@ impl Engine
 			return Err(MlError::ModelFile("file must be in .onnx format".into()));
 		}
 
-		let compiled_path = path.replace(".onnx", ".compiled.onnx");
-
-		Ok((path, compiled_path))
+		Ok(path)
 	}
 
 	fn configure_execution(
@@ -346,8 +337,10 @@ impl Engine
 		Ok(session_builder)
 	}
 
+	#[allow(dead_code)]
 	fn compile(
 		session_builder : &SessionBuilder,
+		raw_model_path : &str,
 		compiled_model_path : &str,
 		recompile : bool,
 	) -> MlResult<()>
@@ -358,6 +351,8 @@ impl Engine
 		}
 
 		ModelCompiler::new(session_builder.clone())
+			.map_err(MlError::Compilation)?
+			.with_model_from_file(raw_model_path)
 			.map_err(MlError::Compilation)?
 			.with_embed_ep_context()
 			.map_err(MlError::Compilation)?

@@ -14,6 +14,23 @@ pub(crate) struct VelocityRegulator
 
 impl VelocityRegulator
 {
+	pub(crate) fn new(
+		max_angular : f32,
+		steering_proportional : f32,
+		max_linear : f32,
+		forward_proportional : f32,
+	) -> Self
+	{
+		VelocityRegulator {
+			max_angular,
+			steering_proportional,
+			max_linear,
+			forward_proportional,
+			angular_velocity : 0.0,
+			linear_velocity : 0.0,
+		}
+	}
+
 	pub(crate) fn linear_velocity(&self) -> f32 { self.linear_velocity }
 
 	pub(crate) fn angular_velocity(&self) -> f32 { self.angular_velocity }

@@ -9,9 +9,9 @@ Settings used:
 - Simplification enabled to fuse layers for lower latency.
 - FP32 precision maintained for maximum compatibility with CoreML providers.
 - (default) Input shape: (1, 3, 640, 640) BCHW
-- Output shape: (1, 7, 8400) --> 4 box coordinates + 3 labels confidence scores (robot, batteries, board, respectively)
-- Size (memory): 107 MB
-- Size (parameters): 28,358,830
+- Output shape: (1, 7, 8400) --> 4 box coordinates + 3 labels confidence scores (robot, board, target, respectively)
+- Size (memory): 48 MB
+- Size (parameters): 12,749,288
 """  # noqa
 
 from argparse import ArgumentParser, Namespace
@@ -28,7 +28,7 @@ def parse_args() -> Namespace:
     args.add_argument(
         "--src",
         type=str,
-        default="assets/models/yolo/yolov8m-worldv2.pt",
+        default="assets/models/yolo/yolov8s-worldv2.pt",
         help="Path to the original .pt model file.",
     )
 
@@ -50,9 +50,9 @@ def parse_args() -> Namespace:
         "--labels",
         type=str_to_list,
         default=[
-            "small tracked robot",
-            "battery pack",
-            "circuit board",
+            "robot with rubber tracks",
+            "circuit board with connected cables and batteries pack",
+            "yellow small circular block",
         ],  # TODO
         help=(
             "Comma-separated prompts describing target objects the model needs "

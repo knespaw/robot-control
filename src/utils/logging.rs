@@ -2,6 +2,7 @@ use tracing::{Level, debug, enabled, error, info, trace, warn};
 
 
 
+#[allow(dead_code)]
 fn check_log_level(level : Level) -> bool
 {
 	match level
@@ -15,6 +16,7 @@ fn check_log_level(level : Level) -> bool
 }
 
 
+#[allow(dead_code)]
 pub(crate) fn log_message<F>(
 	level : Level,
 	msg_constructor : F,

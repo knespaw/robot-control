@@ -10,6 +10,7 @@ pub(crate) enum MlError
 	#[error("model ONNX file either is corrupted, or does not exist >> {0}")]
 	ModelFile(String),
 
+	#[allow(dead_code)]
 	#[error("model compilation failed >> {0}")]
 	Compilation(ort::Error),
 

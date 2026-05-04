@@ -1,4 +1,6 @@
-fn main()
-{
-	println!("Hello, world!");
-}
+use rbctrl::runner::run;
+
+
+
+#[tokio::main]
+async fn main() { run().await; }

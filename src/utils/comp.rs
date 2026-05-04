@@ -1,11 +1,11 @@
-// "Magic" coefficients which are smaller than regular Taylor coefficients to pool the curve down.
+/// "Magic" coefficients that are smaller than regular Taylor coefficients to pool the curve down.
 const TAYLOR_SERIES_COEFFICIENT_3 : f32 = 0.32762276;
 const TAYLOR_SERIES_COEFFICIENT_5 : f32 = 0.15931422;
 const TAYLOR_SERIES_COEFFICIENT_7 : f32 = -0.04649647;
 
 
 
-/// Fast implementation of the four quadrant arctangent computation for [`f32`] numbers
+/// Fast implementation of the four-quadrant arctangent computation for [`f32`] numbers
 /// (in radians).
 pub(crate) fn fast_atan2(
 	y : f32,
@@ -41,3 +41,7 @@ pub(crate) fn fast_atan2(
 
 	angle
 }
+
+
+
+pub(crate) fn sigmoid(value : f32) -> f32 { 1.0 / (1.0 + (-value).exp()) }

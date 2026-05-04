@@ -16,8 +16,8 @@ use super::utils::{ComError, ComResult};
 
 pub(crate) struct BLECom
 {
-	name :           &'static str,
-	write_uuid :     Uuid,
+	_name :          &'static str,
+	_write_uuid :    Uuid,
 	device :         Peripheral,
 	characteristic : Characteristic,
 }
@@ -33,7 +33,12 @@ impl BLECom
 
 		let (device, characteristic) = Self::connect_device(device, write_uuid).await?;
 
-		Ok(BLECom { name, write_uuid, device, characteristic })
+		Ok(BLECom {
+			_name : name,
+			_write_uuid : write_uuid,
+			device,
+			characteristic,
+		})
 	}
 
 	async fn find_device(name : &'static str) -> ComResult<Peripheral>
