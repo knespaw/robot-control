@@ -1,6 +1,7 @@
 use gstreamer::Sample;
 use kanal::{AsyncSender, Receiver};
 use rayon::prelude::*;
+use tracing::{debug, error, info};
 
 use super::engine::*;
 use super::utils::*;
@@ -63,6 +64,8 @@ impl Predictor
 		predictions_pool : Pool<Vec<f32>>,
 	) -> MlResult<Self>
 	{
+		info!("initializing YOLO-World predictor");
+
 		let mut _inp = TensorSymbol::<f32>::new(
 			INP_KEY,
 			[
@@ -89,11 +92,22 @@ impl Predictor
 
 	pub(crate) fn run_stream(&mut self)
 	{
+		info!("predictor stream loop started");
 		while let Ok(sample) = self.img_rx.recv()
 		{
+			debug!("received sample for inference");
 			self.process_stream_sample(sample);
 
-			let mut outputs = self.engine.infer().unwrap(); // TODO
+			let mut outputs = match self.engine.infer()
+			{
+				Ok(outputs) => outputs,
+
+				Err(e) =>
+				{
+					error!(error = %e, "inference failed for current sample");
+					continue;
+				},
+			};
 
 			// must be present
 			let boxes_value = unsafe {
@@ -119,9 +133,17 @@ impl Predictor
 					buf
 				},
 
-				Ok(None) => boxes_data.to_vec(),
+				Ok(None) =>
+				{
+					debug!("prediction pool receiver returned no reusable buffer");
+					boxes_data.to_vec()
+				},
 
-				Err(_) => panic!("should not happen"), // TODO
+				Err(err) =>
+				{
+					error!(error = ?err, "failed to receive a reusable predictions buffer; the channel is closed, stopping the predictor");
+					break;
+				},
 			};
 
 			match self
@@ -131,11 +153,20 @@ impl Predictor
 			{
 				Ok(true) => (),
 
-				Ok(false) => (),
+				Ok(false) =>
+				{
+					debug!("dropping a raw prediction because the postprocessor queue is full");
+				},
 
-				Err(_) => panic!("should not happen"), // TODO
+				Err(err) =>
+				{
+					error!(error = ?err, "failed to forward a raw prediction; the channel is closed, stopping the predictor");
+					break;
+				},
 			}
 		}
+
+		info!("predictor stream loop stopped");
 	}
 
 	fn process_stream_sample(
@@ -171,6 +202,7 @@ impl Postprocessor
 		results_tx : AsyncSender<InferenceResult>,
 	) -> Self
 	{
+		info!("initializing YOLO-World predictions postprocessor");
 		Postprocessor {
 			predictions_pool,
 			results_tx,
@@ -253,6 +285,7 @@ impl Postprocessor
 		self._detections.clear();
 		self._detections
 			.par_extend(detections_iter);
+		debug!(detections = self._detections.len(), "raw detections filtered");
 	}
 
 	fn filter_final_detections(&mut self) -> InferenceResult
@@ -311,6 +344,8 @@ impl Postprocessor
 
 	pub(crate) async fn run(&mut self)
 	{
+		info!("postprocessor loop started");
+
 		while let Ok(buffer) = self
 			.predictions_pool
 			.rx()
@@ -322,18 +357,24 @@ impl Postprocessor
 
 			let final_detections = self.filter_final_detections();
 
-			// TODO
-			let _ = self
+			if let Err(err) = self
 				.predictions_pool
 				.tx()
-				.try_send(buffer);
+				.try_send(buffer)
+			{
+				error!(error = ?err, "failed to return predictions buffer to pool");
+			}
 
-			// TODO
-			let _ = self
+			if let Err(err) = self
 				.results_tx
 				.send(final_detections)
-				.await;
+				.await
+			{
+				error!(error = ?err, "failed to forward final detections");
+			}
 		}
+
+		info!("postprocessor loop stopped");
 	}
 }
 

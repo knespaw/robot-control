@@ -8,6 +8,7 @@ use ort::memory::Allocator;
 use ort::session::builder::{GraphOptimizationLevel, SessionBuilder};
 use ort::session::{IoBinding, Session, SessionOutputs};
 use ort::value::{PrimitiveTensorElementType, Tensor};
+use tracing::{debug, info};
 
 use super::utils::*;
 use crate::utils::files::get_path;
@@ -183,6 +184,8 @@ impl Engine
 		T : TensorType,
 		V : TensorType,
 	{
+		info!(model_subpath, "starting inference engine");
+
 		let model_path = Self::get_model_full_path(model_subpath)?;
 
 		let executor = Self::configure_execution(execution_parameters)?;
@@ -190,7 +193,7 @@ impl Engine
 		let mut session_builder = Self::configure_computation(executor, inference_parameters)?;
 
 		let session = session_builder
-			.commit_from_file(model_path)
+			.commit_from_file(&model_path)
 			.map_err(|e| MlError::Init(e.to_string()))?;
 
 		let mut io = session
@@ -200,6 +203,8 @@ impl Engine
 		Self::prebind_outputs(&mut io, &session, output_symbols)?;
 
 		Self::prebind_inputs(&mut io, &session, input_symbols)?;
+
+		info!(model_path, "inference engine ready");
 
 		Ok(Engine { session, io })
 	}
@@ -364,10 +369,12 @@ impl Engine
 
 	pub(crate) fn infer(&'_ mut self) -> MlResult<SessionOutputs<'_>>
 	{
+		debug!("synchronizing inference inputs");
 		self.io
 			.synchronize_inputs()
 			.map_err(MlError::Sync)?;
 
+		debug!("running inference session");
 		self.session
 			.run_binding(&self.io)
 			.map_err(MlError::Inference)

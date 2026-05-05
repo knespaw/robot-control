@@ -1,6 +1,7 @@
 use std::f32::consts::PI;
 
 use kanal::AsyncReceiver;
+use tracing::{debug, error, info};
 
 use super::regulator::VelocityRegulator;
 use super::tracker::ObjectTracker;
@@ -69,6 +70,7 @@ impl Controller
 		detections_rx : AsyncReceiver<InferenceResult>,
 	) -> Self
 	{
+		info!("initializing controller");
 		Controller {
 			tracker : ObjectTracker::new(
 				params.position_change_threshold,
@@ -97,9 +99,20 @@ impl Controller
 		if misses > 0
 		{
 			self.no_updates_count += misses;
+			debug!(
+				misses,
+				no_updates_count = self.no_updates_count,
+				no_updates_threshold = self.no_updates_threshold,
+				"missing detections recorded"
+			);
 
 			if self.no_updates_count > self.no_updates_threshold
 			{
+				error!(
+					no_updates_count = self.no_updates_count,
+					no_updates_threshold = self.no_updates_threshold,
+					"missing detections threshold exceeded"
+				);
 				todo!()
 			}
 		}
@@ -115,7 +128,6 @@ impl Controller
 	)
 	{
 		let mut n_missing_detections = 0;
-
 
 		if !detections.tracked().is_empty()
 		{
@@ -174,10 +186,13 @@ impl Controller
 				.to_string(),
 		);
 		self.message.push('\n');
+		debug!(payload = self.message.as_str(), "prepared control message",);
 	}
 
 	pub(crate) async fn run(&mut self)
 	{
+		info!("controller loop started");
+
 		while let Ok(new_detections) = self.detections_rx.recv().await
 		{
 			self.process_detections(&new_detections);
@@ -187,7 +202,13 @@ impl Controller
 			self.blecom
 				.write(self.message.as_bytes())
 				.await
+				.map_err(|e| {
+					error!(error = %e, "failed to write control message");
+					e
+				})
 				.unwrap(); // TODO
 		}
+
+		info!("controller loop stopped");
 	}
 }

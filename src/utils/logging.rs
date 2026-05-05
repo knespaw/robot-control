@@ -1,8 +1,32 @@
+use std::sync::Once;
+
 use tracing::{Level, debug, enabled, error, info, trace, warn};
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
 
 
-#[allow(dead_code)]
+static LOGGING_INIT : Once = Once::new();
+
+
+
+pub(crate) fn init_logging()
+{
+	LOGGING_INIT.call_once(|| {
+		let env_filter =
+			EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+		tracing_subscriber::registry()
+			.with(env_filter)
+			.with(tracing_subscriber::fmt::layer().compact())
+			.init();
+
+		info!("tracing initialized");
+	});
+}
+
+
+
 fn check_log_level(level : Level) -> bool
 {
 	match level
@@ -16,7 +40,7 @@ fn check_log_level(level : Level) -> bool
 }
 
 
-#[allow(dead_code)]
+
 pub(crate) fn log_message<F>(
 	level : Level,
 	msg_constructor : F,

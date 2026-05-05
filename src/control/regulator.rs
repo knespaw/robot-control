@@ -1,3 +1,5 @@
+use tracing::debug;
+
 use super::tracker::PositionVector;
 
 
@@ -45,5 +47,13 @@ impl VelocityRegulator
 
 		self.linear_velocity = (self.forward_proportional * pos_vec.0 * pos_vec.1.cos())
 			.clamp(-self.max_linear, self.max_linear);
+
+		debug!(
+			distance = pos_vec.0,
+			angle = pos_vec.1,
+			linear_velocity = self.linear_velocity,
+			angular_velocity = self.angular_velocity,
+			"updated control velocities"
+		);
 	}
 }

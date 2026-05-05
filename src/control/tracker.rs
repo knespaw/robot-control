@@ -1,5 +1,7 @@
 use std::f32::consts::PI;
 
+use tracing::debug;
+
 use crate::cv::BoundingBox;
 use crate::ml::{INP_HEIGHT, INP_WIDTH};
 use crate::utils::comp::fast_atan2;
@@ -52,6 +54,7 @@ impl PositionSmoother
 		{
 			self.x = alpha * pos.xc + (1.0 - alpha) * self.x;
 			self.y = alpha * pos.yc + (1.0 - alpha) * self.y;
+			debug!(x = self.x, y = self.y, alpha, max_delta, "updated smoothed position");
 		}
 	}
 }
@@ -187,7 +190,13 @@ impl ObjectTracker
 		let (_, ref_angle) = Self::calculate_position_vector(&self.ref_pos, &self.tracked_pos);
 
 		let corrected_angle = self.adjust_angle(target_angle, ref_angle);
+		let corrected_distance = target_dist.sqrt();
 
-		(target_dist.sqrt(), corrected_angle)
+		debug!(
+			target_distance = corrected_distance,
+			corrected_angle, "calculated corrected position vector",
+		);
+
+		(corrected_distance, corrected_angle)
 	}
 }
