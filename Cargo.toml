@@ -35,18 +35,15 @@ uuid = { version = "1.23.1" }
 # Logging
 tracing = { version = "0.1.44" }
 tracing-subscriber = { version = "0.3.23", features = ["registry", "env-filter"] }
-tracing-opentelemetry = { version = "0.32.1" }
 tracing-test = { version = "0.2.6" }
 
-
 # Computation
-rand = { version = "0.10.1" }
 rayon = { version = "1.12.0" }
-ndarray = { version = "0.17.2", features = ["std", "rayon"] }
 
-# Images
+# CV
 image = { version = "0.25.8", default-features = true, features = ["jpeg", "png"] }
 imageproc = { version = "0.26.1", features = ["rayon"] }
+opencv = { version = "0.98.2", features = ["objdetect"] }
 
 # General
 thiserror = { version = "2.0.18" }

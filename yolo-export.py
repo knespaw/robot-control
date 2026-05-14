@@ -9,7 +9,7 @@ Settings used:
 - Simplification enabled to fuse layers for lower latency.
 - FP32 precision maintained for maximum compatibility with CoreML providers.
 - (default) Input shape: (1, 3, 640, 640) BCHW
-- Output shape: (1, 7, 8400) --> 4 box coordinates + 3 labels confidence scores (robot, board, target, respectively)
+- Output shape: (1, 6, 8400) --> 4 box coordinates + 3 labels confidence scores (robot and target, respectively)
 - Size (memory): 48 MB
 - Size (parameters): 12,749,288
 """  # noqa
@@ -51,7 +51,6 @@ def parse_args() -> Namespace:
         type=str_to_list,
         default=[
             "robot with rubber tracks",
-            "circuit board with connected cables and batteries pack",
             "yellow small circular block",
         ],  # TODO
         help=(

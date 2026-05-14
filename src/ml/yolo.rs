@@ -1,12 +1,13 @@
 use gstreamer::Sample;
 use kanal::{AsyncSender, Receiver};
 use rayon::prelude::*;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::engine::*;
 use super::utils::*;
 use crate::com::Pool;
-use crate::cv::{Detection, Object, convert_image};
+use crate::cv::convert_image;
+use crate::cv::obj_detect::{Corners, Detection, MarkerDetector, Object};
 use crate::utils::comp::sigmoid;
 
 
@@ -22,7 +23,7 @@ const INP_SHAPE : (u16, u16, u16, u16) = (1, INP_CHANNELS, INP_HEIGHT, INP_WIDTH
 
 
 const OUT_KEY : &str = "output0";
-const OUT_SHAPE : (u16, u16, u16) = (1, 7, 8400);
+const OUT_SHAPE : (u16, u16, u16) = (1, 6, 8400);
 
 
 pub(crate) const TRACKED : Object = Object {
@@ -31,13 +32,6 @@ pub(crate) const TRACKED : Object = Object {
 	confidence_threshold : 0.5,
 	iou_threshold :        0.5,
 	label :                "robot with rubber tracks",
-};
-pub(crate) const REFERENCE : Object = Object {
-	min_size :             10.0,
-	max_size :             200.0,
-	confidence_threshold : 0.5,
-	iou_threshold :        0.5,
-	label :                "circuit board with connected cables and batteries pack",
 };
 pub(crate) const TARGET : Object = Object {
 	min_size :             10.0,
@@ -49,11 +43,21 @@ pub(crate) const TARGET : Object = Object {
 
 
 
+#[derive(Default)]
+pub(crate) struct Prediction
+{
+	model_detections :    Vec<f32>,
+	reference_detection : Option<Corners>,
+}
+
+
+
 pub(crate) struct Predictor
 {
 	engine :           Engine,
 	img_rx :           Receiver<Sample>,
-	predictions_pool : Pool<Vec<f32>>,
+	ref_detector :     MarkerDetector<INP_HEIGHT, INP_WIDTH>,
+	predictions_pool : Pool<Prediction>,
 	_inp :             TensorSymbol<f32>,
 }
 
@@ -61,7 +65,8 @@ impl Predictor
 {
 	pub(crate) fn init(
 		img_rx : Receiver<Sample>,
-		predictions_pool : Pool<Vec<f32>>,
+		ref_detector : MarkerDetector<INP_HEIGHT, INP_WIDTH>,
+		predictions_pool : Pool<Prediction>,
 	) -> MlResult<Self>
 	{
 		info!("initializing YOLO-World predictor");
@@ -87,7 +92,7 @@ impl Predictor
 			vec![&mut _inp],
 		)?;
 
-		Ok(Predictor { engine, img_rx, _inp, predictions_pool })
+		Ok(Predictor { engine, img_rx, _inp, predictions_pool, ref_detector })
 	}
 
 	pub(crate) fn run_stream(&mut self)
@@ -96,7 +101,12 @@ impl Predictor
 		while let Ok(sample) = self.img_rx.recv()
 		{
 			debug!("received sample for inference");
-			self.process_stream_sample(sample);
+
+			if let Err(e) = self.process_stream_sample(sample)
+			{
+				error!(error = %e, "failed to pre-process stream frame");
+				continue;
+			};
 
 			let mut outputs = match self.engine.infer()
 			{
@@ -124,19 +134,35 @@ impl Predictor
 					.1
 			};
 
+			let corners = self
+				.ref_detector
+				.detect()
+				.unwrap_or_else(|_| {
+					warn!("could not find reference object");
+					None
+				});
+
 			let buffer = match self.predictions_pool.rx().try_recv()
 			{
 				Ok(Some(mut buf)) =>
 				{
-					buf.clear();
-					buf.extend_from_slice(boxes_data);
+					buf.model_detections.clear();
+					buf.model_detections
+						.extend_from_slice(boxes_data);
+
+					buf.reference_detection = corners;
+
 					buf
 				},
 
 				Ok(None) =>
 				{
 					debug!("prediction pool receiver returned no reusable buffer");
-					boxes_data.to_vec()
+
+					Prediction {
+						model_detections :    boxes_data.to_vec(),
+						reference_detection : corners,
+					}
 				},
 
 				Err(err) =>
@@ -172,17 +198,23 @@ impl Predictor
 	fn process_stream_sample(
 		&mut self,
 		sample : Sample,
-	)
+	) -> MlResult<()>
 	{
 		if let Some(buffer) = sample.buffer()
 			&& let Ok(map) = buffer.map_readable()
 		{
 			let raw_rgb_data = map.as_slice();
 
+			self.ref_detector
+				.update_image_data(raw_rgb_data)
+				.map_err(|e| MlError::Reference(e.to_string()))?;
+
 			let tensor_data = unsafe { self._inp.held_data() };
 
 			convert_image::<INP_HEIGHT, INP_WIDTH, INP_CHANNELS>(raw_rgb_data, tensor_data);
 		}
+
+		Ok(())
 	}
 }
 
@@ -190,7 +222,7 @@ impl Predictor
 
 pub(crate) struct Postprocessor
 {
-	predictions_pool : Pool<Vec<f32>>,
+	predictions_pool : Pool<Prediction>,
 	results_tx :       AsyncSender<InferenceResult>,
 	_detections :      Vec<Detection<INP_HEIGHT, INP_WIDTH>>,
 }
@@ -198,7 +230,7 @@ pub(crate) struct Postprocessor
 impl Postprocessor
 {
 	pub(crate) fn new(
-		predictions_pool : Pool<Vec<f32>>,
+		predictions_pool : Pool<Prediction>,
 		results_tx : AsyncSender<InferenceResult>,
 	) -> Self
 	{
@@ -241,17 +273,11 @@ impl Postprocessor
 		width : f32,
 		height : f32,
 		tracked_score : f32,
-		ref_score : f32,
 		target_score : f32,
 	) -> Option<Detection<INP_HEIGHT, INP_WIDTH>>
 	{
 		let (mut max_score, mut obj) = (tracked_score, &TRACKED);
 
-		if ref_score > max_score
-		{
-			max_score = ref_score;
-			obj = &REFERENCE;
-		}
 		if target_score > max_score
 		{
 			max_score = target_score;
@@ -266,6 +292,11 @@ impl Postprocessor
 		raw_detections : &[f32],
 	)
 	{
+		if raw_detections.is_empty()
+		{
+			return;
+		}
+
 		let n_detections = OUT_SHAPE.2 as usize;
 
 		let detections_iter = (0 .. n_detections)
@@ -278,14 +309,11 @@ impl Postprocessor
 					raw_detections[3 * n_detections + idx],
 					raw_detections[4 * n_detections + idx],
 					raw_detections[5 * n_detections + idx],
-					raw_detections[6 * n_detections + idx],
 				)
 			});
 
-		self._detections.clear();
 		self._detections
 			.par_extend(detections_iter);
-		debug!(detections = self._detections.len(), "raw detections filtered");
 	}
 
 	fn filter_final_detections(&mut self) -> InferenceResult
@@ -293,51 +321,22 @@ impl Postprocessor
 		let mut result = InferenceResult {
 			tracked :   Detection::default(),
 			target :    Detection::default(),
-			reference : Detection::default(),
+			reference : None,
 		};
 
 		self._detections
 			.iter()
 			.for_each(|detection| {
-				match detection.object.label
+				if detection.object.label == TRACKED.label
+					&& detection.confidence > result.tracked.confidence
 				{
-					label if label == TRACKED.label =>
-					{
-						if detection.confidence > result.tracked.confidence
-						{
-							result.tracked = *detection;
-						}
-					},
-
-					label if label == REFERENCE.label =>
-					{
-						if detection.confidence > result.reference.confidence
-						{
-							result.reference = *detection;
-						}
-					},
-
-					_ =>
-					{
-						if detection.confidence > result.target.confidence
-						{
-							result.target = *detection;
-						}
-					},
+					result.tracked = *detection;
+				}
+				else if detection.confidence > result.target.confidence
+				{
+					result.target = *detection;
 				}
 			});
-
-		// the reference object should always be located within the tracked object
-		if !result.tracked.is_empty()
-			&& !result.reference.is_empty()
-			&& result
-				.tracked
-				.bounding_box
-				.iou(&result.reference.bounding_box)
-				== 0.0
-		{
-			result.reference = Detection::default();
-		}
 
 		result
 	}
@@ -353,9 +352,9 @@ impl Postprocessor
 			.recv()
 			.await
 		{
-			self.filter_raw_detections(&buffer);
+			self.filter_raw_detections(&buffer.model_detections);
 
-			let final_detections = self.filter_final_detections();
+			let reference = buffer.reference_detection;
 
 			if let Err(err) = self
 				.predictions_pool
@@ -365,12 +364,21 @@ impl Postprocessor
 				error!(error = ?err, "failed to return predictions buffer to pool");
 			}
 
-			if let Err(err) = self
-				.results_tx
-				.send(final_detections)
-				.await
+			if !self._detections.is_empty()
 			{
-				error!(error = ?err, "failed to forward final detections");
+				let mut final_detections = self.filter_final_detections();
+
+				final_detections.reference = reference;
+
+				self._detections.clear();
+
+				if let Err(err) = self
+					.results_tx
+					.send(final_detections)
+					.await
+				{
+					error!(error = ?err, "failed to forward final detections");
+				}
 			}
 		}
 
@@ -380,19 +388,19 @@ impl Postprocessor
 
 
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Debug)]
 pub(crate) struct InferenceResult
 {
 	tracked :   Detection<INP_HEIGHT, INP_WIDTH>,
-	reference : Detection<INP_HEIGHT, INP_WIDTH>,
 	target :    Detection<INP_HEIGHT, INP_WIDTH>,
+	reference : Option<Corners>,
 }
 
 impl InferenceResult
 {
 	pub(crate) fn tracked(&self) -> &Detection<INP_HEIGHT, INP_WIDTH> { &self.tracked }
 
-	pub(crate) fn reference(&self) -> &Detection<INP_HEIGHT, INP_WIDTH> { &self.reference }
+	pub(crate) fn reference(&self) -> &Option<Corners> { &self.reference }
 
 	pub(crate) fn target(&self) -> &Detection<INP_HEIGHT, INP_WIDTH> { &self.target }
 }
@@ -409,7 +417,7 @@ mod tests
 
 	use image::imageops::FilterType;
 	use image::{Rgb, RgbImage};
-	use imageproc::drawing::draw_hollow_rect_mut;
+	use imageproc::drawing::{draw_filled_circle_mut, draw_hollow_rect_mut, draw_line_segment_mut};
 	use tracing_test::traced_test;
 
 	use super::*;
@@ -428,6 +436,12 @@ mod tests
 		let (detection_tx, _) = kanal::bounded_async(1);
 
 		Postprocessor::new(predictions_pool, detection_tx)
+	}
+
+
+	fn create_test_marker_detector() -> MarkerDetector<INP_HEIGHT, INP_WIDTH>
+	{
+		MarkerDetector::init(Default::default()).expect("should initialize marker detector")
 	}
 
 
@@ -487,7 +501,6 @@ mod tests
 	{
 		[
 			(detections.tracked(), Rgb([255, 0, 0])),
-			(detections.reference(), Rgb([0, 255, 0])),
 			(detections.target(), Rgb([0, 0, 255])),
 		]
 		.into_iter()
@@ -495,6 +508,27 @@ mod tests
 		.for_each(|(detection, color)| {
 			draw_hollow_rect_mut(image, detection.bounding_box.rect(), color);
 		});
+
+		if let Some(reference) = detections.reference()
+		{
+			let center = (reference.center_x, reference.center_y);
+			let front = (reference.front_x, reference.front_y);
+			let color = Rgb([0, 255, 0]);
+
+			draw_line_segment_mut(image, center, front, color);
+			draw_filled_circle_mut(
+				image,
+				(reference.center_x.round() as i32, reference.center_y.round() as i32),
+				4,
+				color,
+			);
+			draw_filled_circle_mut(
+				image,
+				(reference.front_x.round() as i32, reference.front_y.round() as i32),
+				3,
+				Rgb([255, 255, 255]),
+			);
+		}
 	}
 
 
@@ -537,9 +571,11 @@ mod tests
 	{
 		let (_, rx) = kanal::bounded(1);
 		let pool = Pool::open(2);
+		let ref_detector = create_test_marker_detector();
 
-		let mut yolo = Predictor::init(rx, pool.1).expect("should initialize");
+		let mut yolo = Predictor::init(rx, ref_detector, pool.1).expect("should initialize");
 		let mut postprocessor = create_test_postprocessor();
+		let mut ref_detector = create_test_marker_detector();
 		let images_dir = Path::new(TEST_IMAGES_DIR);
 		let image_paths = get_test_image_paths(images_dir);
 		let mut inference_times_ms = Vec::with_capacity(image_paths.len());
@@ -580,7 +616,13 @@ mod tests
 					.1;
 
 				postprocessor.filter_raw_detections(boxes_data);
-				let detections = postprocessor.filter_final_detections();
+				ref_detector
+					.update_image_data(&raw_rgb_data)
+					.expect("marker detector image update should succeed");
+				let mut detections = postprocessor.filter_final_detections();
+				detections.reference = ref_detector
+					.detect()
+					.expect("marker detection should succeed");
 				draw_detections(&mut resized_image, &detections);
 
 				resized_image

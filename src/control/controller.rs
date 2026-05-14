@@ -1,11 +1,9 @@
-use std::f32::consts::PI;
-
 use kanal::AsyncReceiver;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::regulator::VelocityRegulator;
 use super::tracker::ObjectTracker;
-use crate::com::BLECom;
+use crate::com::{BLECom, ComResult};
 use crate::ml::InferenceResult;
 
 
@@ -25,11 +23,10 @@ pub(crate) struct ControlParameters
 	/// Maximum expected value of an object's position change between consecutive frames. Updates
 	/// exceeding this threshold are not taken into account. Defined as a **square** distance.
 	position_change_threshold :    f32,
-	/// Rotation angle (in radians) between the tracked object and its orientation reference
-	/// object.
-	reference_rotation :           f32,
 	/// Maximum number of consecutive frames that were missing any detection.
 	missed_detections_threshold :  usize,
+	/// Maximum number of consecutive messages that were failed to be written.
+	missed_writes_threshold :      usize,
 }
 
 impl Default for ControlParameters
@@ -38,13 +35,13 @@ impl Default for ControlParameters
 	{
 		ControlParameters {
 			max_angular_velocity :         0.75,
-			max_linear_velocity :          150.0,
-			steering_coefficient :         2.0, // TODO
-			forward_coefficient :          0.5, // TODO
+			max_linear_velocity :          60.0,
+			steering_coefficient :         1.0,
+			forward_coefficient :          0.5,
 			position_smoothing_parameter : 0.5,
-			position_change_threshold :    100.0, // TODO
-			reference_rotation :           -0.5 * PI,
-			missed_detections_threshold :  10, // TODO
+			position_change_threshold :    1000.0,
+			missed_detections_threshold :  30,
+			missed_writes_threshold :      5,
 		}
 	}
 }
@@ -58,6 +55,8 @@ pub(crate) struct Controller
 	detections_rx :        AsyncReceiver<InferenceResult>,
 	no_updates_count :     usize,
 	no_updates_threshold : usize,
+	no_writes_count :      usize,
+	no_writes_threshold :  usize,
 	blecom :               BLECom,
 	message :              String,
 }
@@ -75,7 +74,6 @@ impl Controller
 			tracker : ObjectTracker::new(
 				params.position_change_threshold,
 				params.position_smoothing_parameter,
-				params.reference_rotation,
 			),
 			regulator : VelocityRegulator::new(
 				params.max_angular_velocity,
@@ -85,6 +83,8 @@ impl Controller
 			),
 			no_updates_threshold : params.missed_detections_threshold,
 			no_updates_count : 0,
+			no_writes_threshold : params.missed_writes_threshold,
+			no_writes_count : 0,
 			message : String::new(),
 			blecom : bluetooth_com,
 			detections_rx,
@@ -94,12 +94,12 @@ impl Controller
 	fn no_updates_check(
 		&mut self,
 		misses : usize,
-	)
+	) -> bool
 	{
 		if misses > 0
 		{
 			self.no_updates_count += misses;
-			debug!(
+			warn!(
 				misses,
 				no_updates_count = self.no_updates_count,
 				no_updates_threshold = self.no_updates_threshold,
@@ -113,20 +113,30 @@ impl Controller
 					no_updates_threshold = self.no_updates_threshold,
 					"missing detections threshold exceeded"
 				);
-				todo!()
+
+				return false;
 			}
 		}
 		else
 		{
 			self.no_updates_count = 0;
 		}
+
+		true
 	}
 
 	fn process_detections(
 		&mut self,
 		detections : &InferenceResult,
-	)
+	) -> bool
 	{
+		// empty frames
+		if detections.target().is_empty()
+			&& detections.tracked().is_empty() & detections.reference().is_none()
+		{
+			return true;
+		}
+
 		let mut n_missing_detections = 0;
 
 		if !detections.tracked().is_empty()
@@ -149,23 +159,27 @@ impl Controller
 			n_missing_detections += 1;
 		}
 
-		if !detections.reference().is_empty()
+		if let Some(reference) = detections.reference()
 		{
-			self.tracker
-				.update_reference(&detections.reference().bounding_box);
+			self.tracker.update_reference(reference);
 		}
 		else
 		{
 			n_missing_detections += 1;
 		}
 
-		self.no_updates_check(n_missing_detections);
+		if !self.no_updates_check(n_missing_detections)
+		{
+			return false;
+		}
 
 		let pos_vec = self
 			.tracker
 			.calculate_corrected_position_vector();
 
 		self.regulator.set_velocities(pos_vec);
+
+		true
 	}
 
 	fn prepare_message(&mut self)
@@ -186,29 +200,52 @@ impl Controller
 				.to_string(),
 		);
 		self.message.push('\n');
+
 		debug!(payload = self.message.as_str(), "prepared control message",);
 	}
 
-	pub(crate) async fn run(&mut self)
+	pub(crate) async fn run(&mut self) -> ComResult<bool>
 	{
 		info!("controller loop started");
 
 		while let Ok(new_detections) = self.detections_rx.recv().await
 		{
-			self.process_detections(&new_detections);
+			if !self.process_detections(&new_detections)
+			{
+				return Ok(false);
+			}
 
 			self.prepare_message();
 
-			self.blecom
+			match self
+				.blecom
 				.write(self.message.as_bytes())
 				.await
-				.map_err(|e| {
+			{
+				Ok(_) => self.no_writes_count = 0,
+
+				Err(e) =>
+				{
 					error!(error = %e, "failed to write control message");
-					e
-				})
-				.unwrap(); // TODO
+
+					self.no_writes_count += 1;
+
+					if self.no_writes_count > self.no_writes_threshold
+					{
+						error!(
+							no_writes_count = self.no_writes_count,
+							no_writes_threshold = self.no_writes_threshold,
+							"failed message writes threshold exceeded",
+						);
+
+						// the device is then disconnected
+						return Err(e);
+					}
+				},
+			}
 		}
 
 		info!("controller loop stopped");
+		Ok(true)
 	}
 }

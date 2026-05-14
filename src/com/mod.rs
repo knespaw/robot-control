@@ -5,3 +5,4 @@ mod utils;
 
 pub(crate) use bluetooth::BLECom;
 pub(crate) use buffer_pool::Pool;
+pub(crate) use utils::ComResult;

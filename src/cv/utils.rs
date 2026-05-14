@@ -22,6 +22,15 @@ pub(crate) enum CvError
 
 	#[error("failed to get GStreamer pipeline AppSink")]
 	AppSink,
+
+	#[error("failed to initialize ArUco marker detector >> {0}")]
+	MarkerInit(opencv::Error),
+
+	#[error("failed to update ArUco marker detector image data >> {0}")]
+	MarkerUpdate(opencv::Error),
+
+	#[error("ArUco marker detection failed >> {0}")]
+	MarkerDetection(opencv::Error),
 }
 
 

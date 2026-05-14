@@ -20,6 +20,9 @@ pub(crate) enum MlError
 	#[error("failed to synchronize bound inputs >> {0}")]
 	Sync(ort::Error),
 
+	#[error("reference object detection failed >> {0}")]
+	Reference(String),
+
 	#[error("inference failed >> {0}")]
 	Inference(ort::Error),
 

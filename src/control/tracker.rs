@@ -2,7 +2,7 @@ use std::f32::consts::PI;
 
 use tracing::debug;
 
-use crate::cv::BoundingBox;
+use crate::cv::obj_detect::{BoundingBox, Corners};
 use crate::ml::{INP_HEIGHT, INP_WIDTH};
 use crate::utils::comp::fast_atan2;
 
@@ -13,6 +13,22 @@ type Position = BoundingBox<INP_HEIGHT, INP_WIDTH>;
 
 
 pub(crate) type PositionVector = (f32, f32);
+
+
+
+/// Calculates a distance between point A and B (**squared**), and returns it alongside differences
+/// in coordinates.
+fn calculate_delta(
+	xa : f32,
+	ya : f32,
+	xb : f32,
+	yb : f32,
+) -> (f32, f32, f32)
+{
+	let dx = xa - xb;
+	let dy = ya - yb;
+	(dx.mul_add(dx, dy * dy), dx, dy)
+}
 
 
 
@@ -50,11 +66,10 @@ impl PositionSmoother
 			self.y = pos.yc;
 			self._initialized = true;
 		}
-		else if pos.xc.mul_add(pos.xc, pos.yc * pos.yc) <= max_delta
+		else if calculate_delta(pos.xc, pos.yc, self.x, self.y).0 <= max_delta
 		{
 			self.x = alpha * pos.xc + (1.0 - alpha) * self.x;
 			self.y = alpha * pos.yc + (1.0 - alpha) * self.y;
-			debug!(x = self.x, y = self.y, alpha, max_delta, "updated smoothed position");
 		}
 	}
 }
@@ -64,11 +79,10 @@ impl PositionSmoother
 pub(crate) struct ObjectTracker
 {
 	tracked_pos :         PositionSmoother,
-	ref_pos :             PositionSmoother,
 	target_pos :          PositionSmoother,
+	reference :           Corners,
 	max_pos_change :      f32,
 	smoothing_parameter : f32,
-	ref_rotation :        f32,
 }
 
 impl ObjectTracker
@@ -76,19 +90,12 @@ impl ObjectTracker
 	pub(crate) fn new(
 		max_pos_change : f32,
 		smoothing_parameter : f32,
-		ref_rotation : f32,
 	) -> Self
 	{
 		ObjectTracker {
 			max_pos_change,
 			smoothing_parameter,
-			ref_rotation,
 			tracked_pos : PositionSmoother {
-				x :            0.0,
-				y :            0.0,
-				_initialized : false,
-			},
-			ref_pos : PositionSmoother {
 				x :            0.0,
 				y :            0.0,
 				_initialized : false,
@@ -98,12 +105,11 @@ impl ObjectTracker
 				y :            0.0,
 				_initialized : false,
 			},
+			reference : Corners::default(),
 		}
 	}
 
-	/// Calculates the **squared** distance between both objects' [`Bounding Box`] centers.
-	///
-	/// Square root is not calculated since it is expensive and not needed for every case.
+	/// Calculates the distance between both objects' [`Bounding Box`] centers.
 	///
 	///
 	/// [`Bounding Box`]: BoundingBox
@@ -112,18 +118,16 @@ impl ObjectTracker
 		pos_b : &PositionSmoother,
 	) -> PositionVector
 	{
-		let dx = pos_a.x - pos_b.x;
-		let dy = pos_a.y - pos_b.y;
+		let (dist, dx, dy) = calculate_delta(pos_a.x, pos_a.y, pos_b.x, pos_b.y);
+		let angle = fast_atan2(-dy, dx);
 
-		let dist = dx.mul_add(dx, dy * dy);
-		let angle = fast_atan2(dy, dx);
-
-		(dist, angle)
+		(dist.sqrt(), angle)
 	}
 
 	/// Adjusts the angle which sets the angular velocity of the tracked object (in radians).
 	///
-	/// It is defined as a difference between `target_angle` and `ref_angle` normalized within
+	/// It is defined as a difference between `target_angle` and the tracked object's current
+	/// heading normalized within
 	/// <-[`PI`], [`PI`]> bounds.
 	///
 	/// If the resulting angle is equal to 0, then the tracked robot perfectly faces the target;
@@ -131,10 +135,12 @@ impl ObjectTracker
 	fn adjust_angle(
 		&self,
 		target_angle : f32,
-		ref_angle : f32,
 	) -> f32
 	{
-		let forward_heading = ref_angle + self.ref_rotation;
+		let forward_heading = fast_atan2(
+			-(self.reference.front_y - self.reference.center_y),
+			self.reference.front_x - self.reference.center_x,
+		);
 
 		let mut angle_error = target_angle - forward_heading;
 
@@ -175,28 +181,24 @@ impl ObjectTracker
 
 	pub(crate) fn update_reference(
 		&mut self,
-		reference : &Position,
+		reference : &Corners,
 	)
 	{
-		self.ref_pos
-			.update(reference, self.smoothing_parameter, self.max_pos_change);
+		self.reference = *reference;
 	}
 
 	pub(crate) fn calculate_corrected_position_vector(&mut self) -> PositionVector
 	{
-		let (target_dist, target_angle) =
+		let (distance, target_angle) =
 			Self::calculate_position_vector(&self.target_pos, &self.tracked_pos);
 
-		let (_, ref_angle) = Self::calculate_position_vector(&self.ref_pos, &self.tracked_pos);
-
-		let corrected_angle = self.adjust_angle(target_angle, ref_angle);
-		let corrected_distance = target_dist.sqrt();
+		let corrected_angle = self.adjust_angle(target_angle);
 
 		debug!(
-			target_distance = corrected_distance,
+			target_distance = distance,
 			corrected_angle, "calculated corrected position vector",
 		);
 
-		(corrected_distance, corrected_angle)
+		(distance, corrected_angle)
 	}
 }

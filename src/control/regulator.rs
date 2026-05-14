@@ -1,3 +1,5 @@
+use std::f32::consts::FRAC_PI_2;
+
 use tracing::debug;
 
 use super::tracker::PositionVector;
@@ -45,8 +47,17 @@ impl VelocityRegulator
 		self.angular_velocity =
 			(self.steering_proportional * pos_vec.1).clamp(-self.max_angular, self.max_angular);
 
-		self.linear_velocity = (self.forward_proportional * pos_vec.0 * pos_vec.1.cos())
-			.clamp(-self.max_linear, self.max_linear);
+		// if the absolute angle is greater than 90 degrees, then the robot is facing wrong
+		// direction, and must turn in place
+		self.linear_velocity = if pos_vec.1.abs() < FRAC_PI_2
+		{
+			(self.forward_proportional * pos_vec.0 * pos_vec.1.cos())
+				.clamp(-self.max_linear, self.max_linear)
+		}
+		else
+		{
+			0.0
+		};
 
 		debug!(
 			distance = pos_vec.0,
