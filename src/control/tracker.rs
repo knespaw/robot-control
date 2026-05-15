@@ -41,27 +41,49 @@ struct ArtificialPotentialField
 
 impl ArtificialPotentialField
 {
-	/// Calculates the vector of the force of attraction between `pos_a` and `pos_b`.
+	fn calculate_circumvent_direction(
+		tracked : &PositionSmoother,
+		obstacle : &PositionSmoother,
+		target : &PositionSmoother,
+	) -> f32
+	{
+		let target_dx = target.x - tracked.x;
+		let target_dy = target.y - tracked.y;
+		let obstacle_dx = obstacle.x - tracked.x;
+		let obstacle_dy = obstacle.y - tracked.y;
+
+		// already divided by 2
+		if target_dx.mul_add(obstacle_dy, -(target_dy * obstacle_dx)) >= 0.0
+		{
+			0.5
+		}
+		else
+		{
+			-0.5
+		}
+	}
+
+	/// Calculates the vector of the force of attraction between `target` and `tracked`.
 	///
 	/// Calculations are done according to:
-	/// > 1.1 | *dx*, *dy* - difference in coordinates between `pos_a` and `pos_b`
+	/// > 1.1 | *dx*, *dy* - difference in coordinates between `target` and `tracked`
 	/// >
-	/// > 1.2 | *dist* - distance between `pos_a` and `pos_b`
+	/// > 1.2 | *dist* - distance between `target` and `tracked`
 	/// >
 	/// > 2.1 | *x = (dx / dist) * gain*, *y = (dy / dist) * gain*
 	fn attractive_field(
 		&mut self,
-		pos_a : &PositionSmoother,
-		pos_b : &PositionSmoother,
+		target : &PositionSmoother,
+		tracked : &PositionSmoother,
 	)
 	{
-		if !pos_a._initialized || !pos_b._initialized
+		if !target._initialized || !tracked._initialized
 		{
 			self.vector = (0.0, 0.0);
 			return;
 		}
 
-		let (mut dist, dx, dy) = calculate_delta(pos_a.x, pos_a.y, pos_b.x, pos_b.y);
+		let (mut dist, dx, dy) = calculate_delta(target.x, target.y, tracked.x, tracked.y);
 
 		if dist == 0.0
 		{
@@ -77,15 +99,15 @@ impl ArtificialPotentialField
 		self.vector = (x, y);
 	}
 
-	/// Calculates the vector of the force of repulsion between `pos_a` and `pos_b`.
+	/// Calculates the vector of the force of repulsion between `tracked` and `obstacle`.
 	///
-	/// Perpendicular force is added (depending on the `pos_a` in respect to `pos_b`) to the vector
-	/// to make an object flow around (needed to avoid stalling).
+	/// Perpendicular force is added (depending on the `tracked` in respect to `obstacle`) to the
+	/// vector to make an object flow around (needed to avoid stalling).
 	///
 	/// Calculations are done according to:
-	/// > 1.1. | *dx*, *dy* - difference in coordinates between `pos_a` and `pos_b`
+	/// > 1.1. | *dx*, *dy* - difference in coordinates between `tracked` and `obstacle`
 	/// >
-	/// > 1.2. | *dist* - distance between `pos_a` and `pos_b`
+	/// > 1.2. | *dist* - distance between `tracked` and `obstacle`
 	/// >
 	/// > 2.1 | *zone_r = max(`b_width`, `b_height`) / 2 + margin*
 	/// >
@@ -95,20 +117,22 @@ impl ArtificialPotentialField
 	/// >
 	/// > 3.2 | *x = (dx / dist) * force_mag*, *y = (dy / dist) * force_mag*
 	/// >
-	/// > 3.3 | *dodge = -1.0 if `pos_a.x` < `pos_b.x` else 1.0*
+	/// > 3.3 | *dodge = sign(cross(target_vec, obstacle_vec))*
 	/// >
 	/// > 3.4 | *x += (-dy / dist) * force_mag * dodge / 2*,
 	/// *y += (dx / dist) * force_mag * dodge / 2*
 	fn repulsive_field(
 		&mut self,
-		pos_a : &PositionSmoother,
-		pos_b : &PositionSmoother,
+		tracked : &PositionSmoother,
+		obstacle : &PositionSmoother,
+		target : &PositionSmoother,
 		b_width : f32,
 		b_height : f32,
 	)
 	{
-		if !pos_a._initialized
-			|| !pos_b._initialized
+		if !tracked._initialized
+			|| !obstacle._initialized
+			|| !target._initialized
 			|| b_width <= 0.0
 			|| b_height <= 0.0
 		{
@@ -116,7 +140,7 @@ impl ArtificialPotentialField
 			return;
 		}
 
-		let (mut dist, dx, dy) = calculate_delta(pos_a.x, pos_a.y, pos_b.x, pos_b.y);
+		let (mut dist, dx, dy) = calculate_delta(tracked.x, tracked.y, obstacle.x, obstacle.y);
 
 		if dist == 0.0
 		{
@@ -142,10 +166,10 @@ impl ArtificialPotentialField
 			let x_f = dx * force_mag;
 			let y_f = dy * force_mag;
 
-			let dodge_dir = if pos_a.x < pos_b.x { -1.0 } else { 1.0 };
+			let dodge_dir = Self::calculate_circumvent_direction(tracked, obstacle, target);
 
-			let x = x_f - y_f * dodge_dir * 0.5;
-			let y = y_f + x_f * dodge_dir * 0.5;
+			let x = x_f - y_f * dodge_dir;
+			let y = y_f + x_f * dodge_dir;
 
 			self.vector = (x, y);
 		}
@@ -344,9 +368,34 @@ impl ObjectTracker
 		self.repulsive_apf.repulsive_field(
 			&self.tracked_pos,
 			&self.obstacle_pos,
+			&self.target_pos,
 			obstacle_width,
 			obstacle_height,
 		);
+	}
+
+	fn reduce_distance(&mut self) -> f32
+	{
+		let attractive_force = self
+			.attractive_apf
+			.vector
+			.0
+			.hypot(self.attractive_apf.vector.1);
+
+		let repulsive_force = self
+			.repulsive_apf
+			.vector
+			.0
+			.hypot(self.repulsive_apf.vector.1);
+
+		if repulsive_force > 0.0
+		{
+			(1.0 / (1.0 + 3.0 * repulsive_force / attractive_force.max(1e-3))).clamp(0.15, 1.0)
+		}
+		else
+		{
+			1.0
+		}
 	}
 
 	pub(crate) fn calculate_position_vector(&mut self) -> PositionVector
@@ -358,6 +407,8 @@ impl ObjectTracker
 			self.tracked_pos.y,
 		);
 		target_dist = target_dist.sqrt();
+
+		target_dist *= self.reduce_distance();
 
 		let angle = self.adjust_angle();
 

@@ -40,12 +40,12 @@ impl Default for ControlParameters
 			max_linear_velocity :            60.0,
 			steering_coefficient :           1.0,
 			forward_coefficient :            0.5,
-			position_smoothing_parameter :   0.5,
+			position_smoothing_parameter :   0.3,
 			position_change_threshold :      1000.0,
 			missed_detections_threshold :    30,
 			missed_writes_threshold :        5,
-			obstacle_avoidance_force_gain :  2000.0,
-			obstacle_avoidance_zone_margin : 300.0,
+			obstacle_avoidance_force_gain :  200_000.0,
+			obstacle_avoidance_zone_margin : 200.0,
 		}
 	}
 }

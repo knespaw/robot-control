@@ -56,7 +56,7 @@ pub(crate) const OBSTACLE : Object = Object {
 	max_size :             100.0,
 	confidence_threshold : 0.5,
 	iou_threshold :        0.5,
-	label :                "white cardboard box",
+	label :                "green rectangular block",
 };
 
 
@@ -185,7 +185,7 @@ impl Predictor
 					debug!("prediction pool receiver returned no reusable buffer");
 
 					Prediction {
-						model_detections :    boxes_data.to_vec(),
+						model_detections : boxes_data.to_vec(),
 						reference_detection : corners,
 						debug_frame,
 					}
@@ -407,9 +407,7 @@ impl Postprocessor
 			self.filter_raw_detections(&buffer.model_detections);
 
 			let reference = buffer.reference_detection;
-			let debug_frame = buffer
-				.debug_frame
-				.take();
+			let debug_frame = buffer.debug_frame.take();
 
 			if let Err(err) = self
 				.predictions_pool
@@ -460,15 +458,16 @@ impl Postprocessor
 				return;
 			}
 
-			let mut image = match RgbImage::from_raw(INP_WIDTH as u32, INP_HEIGHT as u32, raw_rgb_data)
-			{
-				Some(image) => image,
-				None =>
+			let mut image =
+				match RgbImage::from_raw(INP_WIDTH as u32, INP_HEIGHT as u32, raw_rgb_data)
 				{
-					error!("failed to construct debug image from raw RGB frame");
-					return;
-				},
-			};
+					Some(image) => image,
+					None =>
+					{
+						error!("failed to construct debug image from raw RGB frame");
+						return;
+					},
+				};
 
 			for (detection, color) in [
 				(detections.tracked(), Rgb([255, 0, 0])),

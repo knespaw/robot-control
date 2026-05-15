@@ -29,6 +29,7 @@ const PIPELINE_STR: &str =
 	"avfvideosrc device-index=<D> ! \
 	video/x-raw,width=<W1>,height=<H1>,framerate=<F>/1 ! \
 	videoconvert ! \
+	videoflip method=automatic ! \
 	videoscale add-borders=true ! \
 	video/x-raw,width=<W2>,height=<H2>,pixel-aspect-ratio=1/1,format=RGB ! \
 	appsink name=<N> emit-signals=true max-buffers=1 drop=true";

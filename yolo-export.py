@@ -53,7 +53,7 @@ def parse_args() -> Namespace:
         default=[
             "robot with rubber tracks",
             "yellow small circular block",
-            "white cardboard box",
+            "green rectangular block",
         ],
         help=(
             "Comma-separated prompts describing target objects the model needs "
