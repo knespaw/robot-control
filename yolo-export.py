@@ -9,7 +9,8 @@ Settings used:
 - Simplification enabled to fuse layers for lower latency.
 - FP32 precision maintained for maximum compatibility with CoreML providers.
 - (default) Input shape: (1, 3, 640, 640) BCHW
-- Output shape: (1, 6, 8400) --> 4 box coordinates + 3 labels confidence scores (robot and target, respectively)
+- Output shape: (1, 7, 8400) --> 4 box coordinates + 3 labels confidence scores (robot, target, and obstacle,
+respectively)
 - Size (memory): 48 MB
 - Size (parameters): 12,749,288
 """  # noqa
@@ -52,7 +53,8 @@ def parse_args() -> Namespace:
         default=[
             "robot with rubber tracks",
             "yellow small circular block",
-        ],  # TODO
+            "white cardboard box",
+        ],
         help=(
             "Comma-separated prompts describing target objects the model needs "
             "to detect."
@@ -75,7 +77,7 @@ if __name__ == "__main__":
         format="onnx",
         imgsz=[arg.imgsz, arg.imgsz],
         simplify=True,  # cleaning up the ONNX graph for better performance
-        opset=12,  # standard version for compatiblity
+        opset=12,  # standard version for compatibility
         dynamic=False,  # fixed input shape for faster inference
         half=False,  # keeping FP32
     )

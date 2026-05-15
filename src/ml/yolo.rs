@@ -23,7 +23,7 @@ const INP_SHAPE : (u16, u16, u16, u16) = (1, INP_CHANNELS, INP_HEIGHT, INP_WIDTH
 
 
 const OUT_KEY : &str = "output0";
-const OUT_SHAPE : (u16, u16, u16) = (1, 6, 8400);
+const OUT_SHAPE : (u16, u16, u16) = (1, 7, 8400);
 
 
 pub(crate) const TRACKED : Object = Object {
@@ -39,6 +39,13 @@ pub(crate) const TARGET : Object = Object {
 	confidence_threshold : 0.5,
 	iou_threshold :        0.5,
 	label :                "yellow small circular block",
+};
+pub(crate) const OBSTACLE : Object = Object {
+	min_size :             10.0,
+	max_size :             100.0,
+	confidence_threshold : 0.5,
+	iou_threshold :        0.5,
+	label :                "white cardboard box",
 };
 
 
@@ -274,6 +281,7 @@ impl Postprocessor
 		height : f32,
 		tracked_score : f32,
 		target_score : f32,
+		obstacle_score : f32,
 	) -> Option<Detection<INP_HEIGHT, INP_WIDTH>>
 	{
 		let (mut max_score, mut obj) = (tracked_score, &TRACKED);
@@ -282,6 +290,12 @@ impl Postprocessor
 		{
 			max_score = target_score;
 			obj = &TARGET;
+		}
+
+		if obstacle_score > max_score
+		{
+			max_score = obstacle_score;
+			obj = &OBSTACLE;
 		}
 
 		Self::validate_detection(sigmoid(max_score), obj, xc, yc, width, height)
@@ -309,6 +323,7 @@ impl Postprocessor
 					raw_detections[3 * n_detections + idx],
 					raw_detections[4 * n_detections + idx],
 					raw_detections[5 * n_detections + idx],
+					raw_detections[6 * n_detections + idx],
 				)
 			});
 
@@ -321,6 +336,7 @@ impl Postprocessor
 		let mut result = InferenceResult {
 			tracked :   Detection::default(),
 			target :    Detection::default(),
+			obstacle :  Detection::default(),
 			reference : None,
 		};
 
@@ -331,6 +347,11 @@ impl Postprocessor
 					&& detection.confidence > result.tracked.confidence
 				{
 					result.tracked = *detection;
+				}
+				else if detection.object.label == OBSTACLE.label
+					&& detection.confidence > result.obstacle.confidence
+				{
+					result.obstacle = *detection;
 				}
 				else if detection.confidence > result.target.confidence
 				{
@@ -393,6 +414,7 @@ pub(crate) struct InferenceResult
 {
 	tracked :   Detection<INP_HEIGHT, INP_WIDTH>,
 	target :    Detection<INP_HEIGHT, INP_WIDTH>,
+	obstacle :  Detection<INP_HEIGHT, INP_WIDTH>,
 	reference : Option<Corners>,
 }
 
@@ -403,6 +425,8 @@ impl InferenceResult
 	pub(crate) fn reference(&self) -> &Option<Corners> { &self.reference }
 
 	pub(crate) fn target(&self) -> &Detection<INP_HEIGHT, INP_WIDTH> { &self.target }
+
+	pub(crate) fn obstacle(&self) -> &Detection<INP_HEIGHT, INP_WIDTH> { &self.obstacle }
 }
 
 

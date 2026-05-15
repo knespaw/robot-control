@@ -11,22 +11,24 @@ use crate::ml::InferenceResult;
 pub(crate) struct ControlParameters
 {
 	/// Maximum angular velocity of the robot (in rad/s).
-	max_angular_velocity :         f32,
+	max_angular_velocity :           f32,
 	/// Maximum linear velocity of the robot (in mm/s).
-	max_linear_velocity :          f32,
+	max_linear_velocity :            f32,
 	/// Tuning coefficient influencing the turning speed.
-	steering_coefficient :         f32,
+	steering_coefficient :           f32,
 	/// Tuning coefficient influencing the forward speed.
-	forward_coefficient :          f32,
+	forward_coefficient :            f32,
 	/// **EMA** value used to smooth positions of detected objects.
-	position_smoothing_parameter : f32,
+	position_smoothing_parameter :   f32,
 	/// Maximum expected value of an object's position change between consecutive frames. Updates
 	/// exceeding this threshold are not taken into account. Defined as a **square** distance.
-	position_change_threshold :    f32,
+	position_change_threshold :      f32,
 	/// Maximum number of consecutive frames that were missing any detection.
-	missed_detections_threshold :  usize,
+	missed_detections_threshold :    usize,
 	/// Maximum number of consecutive messages that were failed to be written.
-	missed_writes_threshold :      usize,
+	missed_writes_threshold :        usize,
+	obstacle_avoidance_force_gain :  f32,
+	obstacle_avoidance_zone_margin : f32,
 }
 
 impl Default for ControlParameters
@@ -34,14 +36,16 @@ impl Default for ControlParameters
 	fn default() -> Self
 	{
 		ControlParameters {
-			max_angular_velocity :         0.75,
-			max_linear_velocity :          60.0,
-			steering_coefficient :         1.0,
-			forward_coefficient :          0.5,
-			position_smoothing_parameter : 0.5,
-			position_change_threshold :    1000.0,
-			missed_detections_threshold :  30,
-			missed_writes_threshold :      5,
+			max_angular_velocity :           0.75,
+			max_linear_velocity :            60.0,
+			steering_coefficient :           1.0,
+			forward_coefficient :            0.5,
+			position_smoothing_parameter :   0.5,
+			position_change_threshold :      1000.0,
+			missed_detections_threshold :    30,
+			missed_writes_threshold :        5,
+			obstacle_avoidance_force_gain :  500.0,
+			obstacle_avoidance_zone_margin : 100.0,
 		}
 	}
 }
@@ -74,6 +78,8 @@ impl Controller
 			tracker : ObjectTracker::new(
 				params.position_change_threshold,
 				params.position_smoothing_parameter,
+				params.obstacle_avoidance_force_gain,
+				params.obstacle_avoidance_zone_margin,
 			),
 			regulator : VelocityRegulator::new(
 				params.max_angular_velocity,
@@ -125,18 +131,11 @@ impl Controller
 		true
 	}
 
-	fn process_detections(
+	fn update_tracker(
 		&mut self,
 		detections : &InferenceResult,
-	) -> bool
+	) -> usize
 	{
-		// empty frames
-		if detections.target().is_empty()
-			&& detections.tracked().is_empty() & detections.reference().is_none()
-		{
-			return true;
-		}
-
 		let mut n_missing_detections = 0;
 
 		if !detections.tracked().is_empty()
@@ -159,6 +158,16 @@ impl Controller
 			n_missing_detections += 1;
 		}
 
+		if !detections.obstacle().is_empty()
+		{
+			self.tracker
+				.update_obstacle(&detections.obstacle().bounding_box);
+		}
+		else
+		{
+			n_missing_detections += 1;
+		}
+
 		if let Some(reference) = detections.reference()
 		{
 			self.tracker.update_reference(reference);
@@ -168,14 +177,40 @@ impl Controller
 			n_missing_detections += 1;
 		}
 
-		if !self.no_updates_check(n_missing_detections)
+		n_missing_detections
+	}
+
+	fn process_detections(
+		&mut self,
+		detections : &InferenceResult,
+	) -> bool
+	{
+		// empty frames
+		if detections.target().is_empty()
+			&& detections.tracked().is_empty() & detections.reference().is_none()
+		{
+			return true;
+		}
+
+		let misses = self.update_tracker(detections);
+
+		if !self.no_updates_check(misses)
 		{
 			return false;
 		}
 
-		let pos_vec = self
-			.tracker
-			.calculate_corrected_position_vector();
+		if !detections.obstacle().is_empty()
+		{
+			self.tracker.calculate_apfs(
+				detections.obstacle().bounding_box.width,
+				detections
+					.obstacle()
+					.bounding_box
+					.height,
+			);
+		}
+
+		let pos_vec = self.tracker.calculate_position_vector();
 
 		self.regulator.set_velocities(pos_vec);
 
