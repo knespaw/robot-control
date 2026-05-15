@@ -44,8 +44,8 @@ impl Default for ControlParameters
 			position_change_threshold :      1000.0,
 			missed_detections_threshold :    30,
 			missed_writes_threshold :        5,
-			obstacle_avoidance_force_gain :  500.0,
-			obstacle_avoidance_zone_margin : 100.0,
+			obstacle_avoidance_force_gain :  2000.0,
+			obstacle_avoidance_zone_margin : 300.0,
 		}
 	}
 }
@@ -199,16 +199,13 @@ impl Controller
 			return false;
 		}
 
-		if !detections.obstacle().is_empty()
-		{
-			self.tracker.calculate_apfs(
-				detections.obstacle().bounding_box.width,
-				detections
-					.obstacle()
-					.bounding_box
-					.height,
-			);
-		}
+		self.tracker.calculate_apfs(
+			detections.obstacle().bounding_box.width,
+			detections
+				.obstacle()
+				.bounding_box
+				.height,
+		);
 
 		let pos_vec = self.tracker.calculate_position_vector();
 

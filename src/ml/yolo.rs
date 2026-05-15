@@ -1,4 +1,8 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use gstreamer::Sample;
+use image::{Rgb, RgbImage};
+use imageproc::drawing::{draw_filled_circle_mut, draw_hollow_rect_mut, draw_line_segment_mut};
 use kanal::{AsyncSender, Receiver};
 use rayon::prelude::*;
 use tracing::{debug, error, info, warn};
@@ -24,6 +28,13 @@ const INP_SHAPE : (u16, u16, u16, u16) = (1, INP_CHANNELS, INP_HEIGHT, INP_WIDTH
 
 const OUT_KEY : &str = "output0";
 const OUT_SHAPE : (u16, u16, u16) = (1, 7, 8400);
+
+// TEMPORARY DEBUG START: save annotated postprocessed frames.
+const DEBUG_SAVE_DETECTIONS : bool = true;
+const DEBUG_SAVE_EVERY_N_FRAMES : usize = 15;
+const DEBUG_SAVE_DIR : &str = "assets/images/yolo-debug";
+static DEBUG_SAVE_COUNTER : AtomicUsize = AtomicUsize::new(0);
+// TEMPORARY DEBUG END: save annotated postprocessed frames.
 
 
 pub(crate) const TRACKED : Object = Object {
@@ -55,6 +66,7 @@ pub(crate) struct Prediction
 {
 	model_detections :    Vec<f32>,
 	reference_detection : Option<Corners>,
+	debug_frame :         Option<Vec<u8>>,
 }
 
 
@@ -109,10 +121,15 @@ impl Predictor
 		{
 			debug!("received sample for inference");
 
-			if let Err(e) = self.process_stream_sample(sample)
+			let debug_frame = match self.process_stream_sample(sample)
 			{
-				error!(error = %e, "failed to pre-process stream frame");
-				continue;
+				Ok(debug_frame) => debug_frame,
+
+				Err(e) =>
+				{
+					error!(error = %e, "failed to pre-process stream frame");
+					continue;
+				},
 			};
 
 			let mut outputs = match self.engine.infer()
@@ -158,6 +175,7 @@ impl Predictor
 						.extend_from_slice(boxes_data);
 
 					buf.reference_detection = corners;
+					buf.debug_frame = debug_frame;
 
 					buf
 				},
@@ -169,6 +187,7 @@ impl Predictor
 					Prediction {
 						model_detections :    boxes_data.to_vec(),
 						reference_detection : corners,
+						debug_frame,
 					}
 				},
 
@@ -205,7 +224,7 @@ impl Predictor
 	fn process_stream_sample(
 		&mut self,
 		sample : Sample,
-	) -> MlResult<()>
+	) -> MlResult<Option<Vec<u8>>>
 	{
 		if let Some(buffer) = sample.buffer()
 			&& let Ok(map) = buffer.map_readable()
@@ -219,9 +238,21 @@ impl Predictor
 			let tensor_data = unsafe { self._inp.held_data() };
 
 			convert_image::<INP_HEIGHT, INP_WIDTH, INP_CHANNELS>(raw_rgb_data, tensor_data);
+
+			// TEMPORARY DEBUG START: retain selected frames for annotated dumps.
+			if DEBUG_SAVE_DETECTIONS
+			{
+				let frame_idx = DEBUG_SAVE_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+				if frame_idx.is_multiple_of(DEBUG_SAVE_EVERY_N_FRAMES)
+				{
+					return Ok(Some(raw_rgb_data.to_vec()));
+				}
+			}
+			// TEMPORARY DEBUG END: retain selected frames for annotated dumps.
 		}
 
-		Ok(())
+		Ok(None)
 	}
 }
 
@@ -366,7 +397,7 @@ impl Postprocessor
 	{
 		info!("postprocessor loop started");
 
-		while let Ok(buffer) = self
+		while let Ok(mut buffer) = self
 			.predictions_pool
 			.rx()
 			.as_async()
@@ -376,6 +407,9 @@ impl Postprocessor
 			self.filter_raw_detections(&buffer.model_detections);
 
 			let reference = buffer.reference_detection;
+			let debug_frame = buffer
+				.debug_frame
+				.take();
 
 			if let Err(err) = self
 				.predictions_pool
@@ -391,6 +425,13 @@ impl Postprocessor
 
 				final_detections.reference = reference;
 
+				// TEMPORARY DEBUG START: save annotated detections.
+				if let Some(raw_rgb_data) = debug_frame
+				{
+					Self::spawn_debug_frame_dump(raw_rgb_data, final_detections);
+				}
+				// TEMPORARY DEBUG END: save annotated detections.
+
 				self._detections.clear();
 
 				if let Err(err) = self
@@ -405,6 +446,73 @@ impl Postprocessor
 
 		info!("postprocessor loop stopped");
 	}
+
+	// TEMPORARY DEBUG START: save annotated detections.
+	fn spawn_debug_frame_dump(
+		raw_rgb_data : Vec<u8>,
+		detections : InferenceResult,
+	)
+	{
+		std::thread::spawn(move || {
+			if let Err(err) = std::fs::create_dir_all(DEBUG_SAVE_DIR)
+			{
+				error!(error = %err, path = DEBUG_SAVE_DIR, "failed to create debug image directory");
+				return;
+			}
+
+			let mut image = match RgbImage::from_raw(INP_WIDTH as u32, INP_HEIGHT as u32, raw_rgb_data)
+			{
+				Some(image) => image,
+				None =>
+				{
+					error!("failed to construct debug image from raw RGB frame");
+					return;
+				},
+			};
+
+			for (detection, color) in [
+				(detections.tracked(), Rgb([255, 0, 0])),
+				(detections.target(), Rgb([0, 0, 255])),
+				(detections.obstacle(), Rgb([255, 255, 0])),
+			]
+			{
+				if !detection.is_empty()
+				{
+					draw_hollow_rect_mut(&mut image, detection.bounding_box.rect(), color);
+				}
+			}
+
+			if let Some(reference) = detections.reference()
+			{
+				let center = (reference.center_x, reference.center_y);
+				let front = (reference.front_x, reference.front_y);
+				let color = Rgb([0, 255, 0]);
+
+				draw_line_segment_mut(&mut image, center, front, color);
+				draw_filled_circle_mut(
+					&mut image,
+					(reference.center_x.round() as i32, reference.center_y.round() as i32),
+					4,
+					color,
+				);
+				draw_filled_circle_mut(
+					&mut image,
+					(reference.front_x.round() as i32, reference.front_y.round() as i32),
+					3,
+					Rgb([255, 255, 255]),
+				);
+			}
+
+			let frame_idx = DEBUG_SAVE_COUNTER.load(Ordering::Relaxed);
+			let output_path = format!("{DEBUG_SAVE_DIR}/frame_{frame_idx:06}.jpg");
+
+			if let Err(err) = image.save(&output_path)
+			{
+				error!(error = %err, path = output_path, "failed to save annotated debug frame");
+			}
+		});
+	}
+	// TEMPORARY DEBUG END: save annotated detections.
 }
 
 

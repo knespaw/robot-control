@@ -55,7 +55,19 @@ impl ArtificialPotentialField
 		pos_b : &PositionSmoother,
 	)
 	{
+		if !pos_a._initialized || !pos_b._initialized
+		{
+			self.vector = (0.0, 0.0);
+			return;
+		}
+
 		let (mut dist, dx, dy) = calculate_delta(pos_a.x, pos_a.y, pos_b.x, pos_b.y);
+
+		if dist == 0.0
+		{
+			self.vector = (0.0, 0.0);
+			return;
+		}
 
 		dist = 1.0 / dist.sqrt();
 
@@ -95,7 +107,22 @@ impl ArtificialPotentialField
 		b_height : f32,
 	)
 	{
+		if !pos_a._initialized
+			|| !pos_b._initialized
+			|| b_width <= 0.0
+			|| b_height <= 0.0
+		{
+			self.vector = (0.0, 0.0);
+			return;
+		}
+
 		let (mut dist, dx, dy) = calculate_delta(pos_a.x, pos_a.y, pos_b.x, pos_b.y);
+
+		if dist == 0.0
+		{
+			self.vector = (0.0, 0.0);
+			return;
+		}
 
 		dist = 1.0 / dist.sqrt();
 
@@ -106,8 +133,8 @@ impl ArtificialPotentialField
 					.max(b_height)
 					.mul_add(0.5, self.margin);
 
-		if dist_zone_r_inv_diff >= 0.0
 		// inverse
+		if dist_zone_r_inv_diff >= 0.0
 		{
 			// multiplied by distance inverse
 			let force_mag = dist * dist_zone_r_inv_diff * dist_zone_r_inv_diff * self.gain;
@@ -115,14 +142,16 @@ impl ArtificialPotentialField
 			let x_f = dx * force_mag;
 			let y_f = dy * force_mag;
 
-			// TODO
-			// value is already divided by 2
-			let dodge_dir = if pos_a.x < pos_b.x { -0.5 } else { 0.5 };
+			let dodge_dir = if pos_a.x < pos_b.x { -1.0 } else { 1.0 };
 
-			let x = -y_f.mul_add(dodge_dir, x_f);
-			let y = x_f.mul_add(dodge_dir, y_f);
+			let x = x_f - y_f * dodge_dir * 0.5;
+			let y = y_f + x_f * dodge_dir * 0.5;
 
 			self.vector = (x, y);
+		}
+		else
+		{
+			self.vector = (0.0, 0.0);
 		}
 	}
 }
@@ -238,8 +267,9 @@ impl ObjectTracker
 	/// if it is negative, then the object must turn left; otherwise, the object must turn right.
 	fn adjust_angle(&self) -> f32
 	{
+		//e
 		let desired_heading = fast_atan2(
-			self.attractive_apf.vector.1 + self.repulsive_apf.vector.1,
+			-(self.attractive_apf.vector.1 + self.repulsive_apf.vector.1),
 			self.attractive_apf.vector.0 + self.repulsive_apf.vector.0,
 		);
 
