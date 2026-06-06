@@ -1,57 +1,66 @@
 graph TD
 %% 1. Node Definitions and Flow
-    Start([Start Autonomous Navigation])
+    subgraph ControlLoop [real-time control loop]
+        CaptureN[GStreamer captures new frame]
+        VidProc[frame pre-processing]
 
-    subgraph Initialization [1. Pre-Loop: Target Acquisition]
-        Capture1[Capture Initial Camera Frame]
-        GDino[Grounding DINO Detects Target]
-        TargetCoords[(Target Pixel Coordinates<br>Xt, Yt)]
+        Aruco["OpenCV detects ArUco marker position"]
+        YOLO[YOLO-World detects: robot, target, obstacles]
 
-        Capture1 --> GDino --> TargetCoords
-    end
+        RobotCoords[(detected objects coordinates)]
+        RefCoords[(ArUco marker position)]
 
-    Start --> Capture1
+        EmaSmoothing[apply EMA]
 
-    subgraph ControlLoop [2. Real-Time Control Loop on Mac]
-        CaptureN[Capture New Frame]
-        YOLO[YOLO-World Detects Robot]
-        RobotCoords[(Robot Pixel Coordinates<br>Xr, Yr)]
+        CalcDistAngle[calculate distance to target]
+        CalcHeading[calculate robot current heading]
+        ApfCalc[calculate APF for obstacle avoidance]
 
-        CalcDistAngle[Calculate Distance & Angle to Target]
-        CalcHeading[Calculate Robot Heading<br>using coordinate history]
+        CalcActualHeading[calculate robot corrected heading]
 
-        CheckArrived{Is Distance < Threshold?}
+        CheckArrived{target reached?}
 
-        CalcVel[Estimate Velocities<br>Linear V, Angular W]
-        SendBLE[/Send V & W via Bluetooth/]
+        CalcVel[estimate adjusted velocities<br>Linear V, Angular W]
 
-        CaptureN --> YOLO --> RobotCoords
-        RobotCoords --> CalcDistAngle
-        RobotCoords --> CalcHeading
+        SendBLE[/send V and W via Bluetooth/]
+
+        CaptureN --> VidProc
+
+        VidProc --> YOLO --> RobotCoords
+        VidProc --> Aruco --> RefCoords
+
+        RefCoords --> CalcHeading
+        RobotCoords --> EmaSmoothing
+
+        EmaSmoothing --> CalcDistAngle
+        EmaSmoothing --> ApfCalc
 
         CalcDistAngle --> CheckArrived
-        CalcHeading --> CheckArrived
 
-        CheckArrived -- "No (Keep Moving)" --> CalcVel
+       CalcHeading --> CalcActualHeading
+       ApfCalc --> CalcActualHeading
+
+        CalcActualHeading --> CheckArrived
+
+        CheckArrived -- "nope" --> CalcVel
         CalcVel --> SendBLE
     end
 
-    TargetCoords --> CaptureN
 
-    subgraph MegaPi [3. MegaPi Hardware Loop]
-        RecvBLE[/Receive V & W/]
-        DiffDrive[Calculate L/R Motor Speeds<br>Differential Drive Math]
-        MoveMotors((Actuate Motors))
+    subgraph MegaPi [MegaPi hardware loop]
+        RecvBLE[/receive V and W/]
+        DiffDrive[calculate L/R motor speeds]
+        MoveMotors((actuate motors))
 
         RecvBLE --> DiffDrive --> MoveMotors
     end
 
     SendBLE --> RecvBLE
 
-    MoveMotors -. "Robot moves, camera sees new position" .-> CaptureN
+    MoveMotors -. "robot moves, camera sees new position" .-> CaptureN
 
-    CheckArrived -- "Yes (Target Reached)" --> StopRobot[Send V=0, W=0]
-    StopRobot --> End([Navigation Complete])
+    CheckArrived -- "yup" --> StopRobot[send V=0, W=0]
+    StopRobot --> End([target reached])
 
 %% 2. Styling Definitions
     classDef aiNode fill:#e3f2fd,stroke:#1e88e5,stroke-width:2px,color:#000
@@ -62,9 +71,9 @@ graph TD
     classDef endpoint fill:#333,stroke:#fff,stroke-width:2px,color:#fff
 
 %% 3. Applying Styles to Nodes
-    class GDino,YOLO aiNode
-    class CalcDistAngle,CalcHeading,CalcVel,DiffDrive mathNode
-    class TargetCoords,RobotCoords dataNode
-    class Capture1,CaptureN,SendBLE,RecvBLE,MoveMotors,StopRobot hardNode
+    class YOLO,Aruco aiNode
+    class EmaSmoothing,CalcActualHeading,ApfCalc,VidProc,CalcDistAngle,CalcHeading,CalcVel,DiffDrive mathNode
+    class RefCoords,TargetCoords,RobotCoords dataNode
+    class CaptureN,SendBLE,RecvBLE,MoveMotors,StopRobot hardNode
     class CheckArrived logicNode
     class Start,End endpoint
